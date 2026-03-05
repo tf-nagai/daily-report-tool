@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UKETUGI 業務日報生成ツール</title>
+
+  <!-- ===== アプリ設定 ===== -->
+  <script>
+    // プロキシURLとモデルは固定（変更不要）
+    const APP_SETTINGS = {
+      PROXY_URL: 'https://uketugi-proxy.nagai-dbf.workers.dev',
+      MODEL: 'claude-sonnet-4-20250514',
+    };
+  </script>
+
+  <!-- ===== 外部ライブラリ（CDN） ===== -->
+  <!-- docx.js: ブラウザ上でWord文書(.docx)を生成するライブラリ -->
+  <script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
+  <!-- FileSaver.js: 生成したファイルをダウンロードさせるライブラリ -->
+  <script src="https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    /* ===== リセット & ベース ===== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy: #2E4057;
+      --navy-light: #3D5470;
+      --accent: #10B981;
+      --accent-hover: #059669;
+      --bg: #F0F2F5;
+      --card: #FFFFFF;
+      --text: #1A1A2E;
+      --text-sub: #6B7280;
+      --border: #E5E7EB;
+      --success: #10B981;
+      --error: #EF4444;
+      --radius: 12px;
+    }
+
+    body {
+      font-family: 'Noto Sans JP', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      min-height: 100vh;
+    }
+
+    /* ===== ヘッダー ===== */
+    .header {
+      background: linear-gradient(135deg, var(--navy) 0%, var(--navy-light) 100%);
+      padding: 28px 32px;
+      color: white;
+      position: relative;
+      overflow: hidden;
+    }
+    .header::after {
+      content: '';
+      position: absolute;
+      top: -50%;
+      right: -10%;
+      width: 400px;
+      height: 400px;
+      background: radial-gradient(circle, rgba(255,255,255,0.06) 0%, transparent 70%);
+      border-radius: 50%;
+    }
+    .header h1 {
+      font-family: 'Outfit', sans-serif;
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+    .header p {
+      font-size: 13px;
+      opacity: 0.75;
+      margin-top: 4px;
+    }
+
+    /* ===== メインコンテナ ===== */
+    .container {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 32px 20px 60px;
+    }
+
+    /* ===== カード ===== */
+    .card {
+      background: var(--card);
+      border-radius: var(--radius);
+      padding: 28px;
+      margin-bottom: 20px;
+      border: 1px solid var(--border);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .card-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--navy);
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card-title .icon {
+      width: 28px;
+      height: 28px;
+      background: var(--navy);
+      color: white;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-family: 'Outfit', sans-serif;
+      font-weight: 600;
+    }
+
+    /* ===== フォーム要素 ===== */
+    .form-group {
+      margin-bottom: 18px;
+    }
+    .form-group:last-child {
+      margin-bottom: 0;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-sub);
+      margin-bottom: 6px;
+    }
+    input[type="text"],
+    input[type="password"],
+    input[type="datetime-local"],
+    textarea {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-family: 'Noto Sans JP', sans-serif;
+      font-size: 14px;
+      color: var(--text);
+      transition: border-color 0.2s;
+      background: #FAFBFC;
+    }
+    input:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      background: white;
+    }
+    textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
+    .hint {
+      font-size: 11px;
+      color: var(--text-sub);
+      margin-top: 4px;
+    }
+
+    /* ===== ファイルアップロード ===== */
+    .file-upload {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 36px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: #FAFBFC;
+      position: relative;
+    }
+    .file-upload:hover {
+      border-color: var(--accent);
+      background: #F0F7FF;
+    }
+    .file-upload.has-file {
+      border-color: var(--success);
+      background: #F0FDF4;
+    }
+    .file-upload input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+    .file-upload .upload-icon {
+      font-size: 32px;
+      margin-bottom: 8px;
+    }
+    .file-upload .upload-text {
+      font-size: 14px;
+      color: var(--text-sub);
+    }
+    .file-upload .file-name {
+      font-size: 14px;
+      color: var(--success);
+      font-weight: 500;
+      margin-top: 4px;
+    }
+
+    /* ===== ボタン ===== */
+    .btn-primary {
+      width: 100%;
+      padding: 14px 24px;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-family: 'Noto Sans JP', sans-serif;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      letter-spacing: 0.5px;
+    }
+    .btn-primary:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(59, 130, 246, 0.35);
+    }
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* ===== プログレス ===== */
+    .progress-area {
+      display: none;
+      margin-top: 24px;
+    }
+    .progress-area.active {
+      display: block;
+    }
+    .progress-bar-track {
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), #818CF8);
+      border-radius: 3px;
+      transition: width 0.5s ease;
+      width: 0%;
+    }
+    .progress-status {
+      font-size: 13px;
+      color: var(--text-sub);
+      text-align: center;
+    }
+
+    /* ===== 結果エリア ===== */
+    .result-area {
+      display: none;
+      text-align: center;
+      padding: 24px;
+    }
+    .result-area.active {
+      display: block;
+    }
+    .result-area .success-icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+    }
+    .result-area p {
+      color: var(--text-sub);
+      font-size: 14px;
+    }
+
+    /* ===== エラー ===== */
+    .error-msg {
+      display: none;
+      background: #FEF2F2;
+      border: 1px solid #FECACA;
+      border-radius: 8px;
+      padding: 12px 16px;
+      color: var(--error);
+      font-size: 13px;
+      margin-top: 12px;
+    }
+    .error-msg.active {
+      display: block;
+    }
+
+    /* ===== フッター ===== */
+    .footer {
+      text-align: center;
+      padding: 20px;
+      font-size: 11px;
+      color: var(--text-sub);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ===== ヘッダー ===== -->
+  <div class="header">
+    <h1>UKETUGI Daily Report</h1>
+    <p>文字起こし・メモから業務日報を自動生成</p>
+  </div>
+
+  <div class="container">
+
+    <!-- ===== 合言葉入力 ===== -->
+    <div class="card">
+      <div class="card-title">
+        <div class="icon">🔑</div>
+        アクセス認証
+      </div>
+      <div class="form-group">
+        <label>合言葉</label>
+        <input type="password" id="accessToken" placeholder="合言葉を入力してください" autocomplete="off">
+        <p class="hint">※ 管理者から共有された合言葉を入力してください</p>
+      </div>
+    </div>
+
+    <!-- ===== 日報情報 ===== -->
+    <div class="card">
+      <div class="card-title">
+        <div class="icon">1</div>
+        日報情報
+      </div>
+      <div class="form-group">
+        <label>名前</label>
+        <input type="text" id="reporterName" placeholder="例: 濱野広">
+      </div>
+      <div class="form-group">
+        <label>日付</label>
+        <input type="date" id="reportDate">
+      </div>
+    </div>
+
+    <!-- ===== 業務内容入力 ===== -->
+    <div class="card">
+      <div class="card-title">
+        <div class="icon">2</div>
+        文字起こしデータ もしくは 情報入力
+      </div>
+      <div class="file-upload" id="fileUploadArea">
+        <div class="upload-icon">📄</div>
+        <div class="upload-text">クリックまたはドラッグ＆ドロップで<br>テキストファイル(.txt)をアップロード</div>
+        <div class="file-name" id="fileName"></div>
+        <input type="file" id="fileInput" accept=".txt,.text">
+      </div>
+      <p class="hint" style="margin-top:8px">または下のテキストエリアに直接入力・ペースト</p>
+      <div class="form-group" style="margin-top:12px">
+        <textarea id="transcriptText" rows="10">今日はスマートフォンショルダーのページ作成について振り返りを行った。
+1月26日から約1ヶ月間、16営業日で約110時間を投入してページを完成させた。
+Photoshopの練習から始めて、2月初旬から本格的に着手。
+背骨と肋骨（ページの骨格とコンテンツ構成）を決める工程が最も大変だった。
+フィードバックの吸収にも想定以上の時間がかかった。
+できる限りのことはやったという達成感がある。
+今後はメルマガ配信で結果を検証し、ページ作成5割・販促5割の認識で進める。
+商品のギミックやこだわりが訴求に重要だと実感した。
+天野会議やヘリテージ会議にも参加し、多角的な視点を得られた。
+メンズカテゴリーの拡大に注力していきたい。</textarea>
+      </div>
+    </div>
+
+    <!-- ===== 生成ボタン ===== -->
+    <button class="btn-primary" id="generateBtn" onclick="handleGenerate()">
+      日報を生成する
+    </button>
+
+    <!-- ===== エラー表示 ===== -->
+    <div class="error-msg" id="errorMsg"></div>
+
+    <!-- ===== 進捗表示 ===== -->
+    <div class="progress-area" id="progressArea">
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill" id="progressFill"></div>
+      </div>
+      <div class="progress-status" id="progressStatus">準備中...</div>
+    </div>
+
+    <!-- ===== 結果表示 ===== -->
+    <div class="result-area card" id="resultArea">
+      <div class="success-icon">✅</div>
+      <p><strong>日報の生成が完了しました！</strong></p>
+      <p style="margin-top:8px">ファイルが自動でダウンロードされます。<br>されない場合は下のボタンをクリックしてください。</p>
+      <button class="btn-primary" style="margin-top:16px; max-width:300px; margin-left:auto; margin-right:auto;" onclick="downloadAgain()">
+        再ダウンロード
+      </button>
+    </div>
+
+  </div>
+
+  <div class="footer">
+    UKETUGI Daily Report Tool — Powered by Claude API + docx.js
+  </div>
+
+<script>
+// =============================================================================
+// グローバル変数
+// =============================================================================
+let transcriptContent = '';   // 文字起こしテキスト
+let generatedBuffer = null;   // 生成済みdocxバッファ
+let generatedFileName = '';   // 生成済みファイル名
+
+// =============================================================================
+// UI操作
+// =============================================================================
+
+// 設定チェック不要（合言葉はボタン押下時にチェック）
+
+// ファイルアップロード処理
+document.getElementById('fileInput').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(ev) {
+    transcriptContent = ev.target.result;
+    document.getElementById('fileName').textContent = '📎 ' + file.name;
+    document.getElementById('fileUploadArea').classList.add('has-file');
+    document.getElementById('transcriptText').value = transcriptContent;
+  };
+  reader.readAsText(file, 'UTF-8');
+});
+
+// プログレス更新
+function setProgress(pct, msg) {
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressStatus').textContent = msg;
+}
+
+// エラー表示
+function showError(msg) {
+  const el = document.getElementById('errorMsg');
+  el.textContent = msg;
+  el.classList.add('active');
+}
+function hideError() {
+  document.getElementById('errorMsg').classList.remove('active');
+}
+
+// 再ダウンロード
+function downloadAgain() {
+  if (generatedBuffer) {
+    saveAs(generatedBuffer, generatedFileName);
+  }
+}
+
+// =============================================================================
+// メイン処理: 日報生成
+// =============================================================================
+async function handleGenerate() {
+  hideError();
+
+  // --- 合言葉チェック ---
+  const accessToken = document.getElementById('accessToken').value.trim();
+  if (!accessToken) {
+    showError('合言葉を入力してください');
+    return;
+  }
+
+  const proxyUrl = APP_SETTINGS.PROXY_URL;
+  const model = APP_SETTINGS.MODEL;
+
+  // --- バリデーション ---
+  const reporterName = document.getElementById('reporterName').value.trim();
+  const reportDate = document.getElementById('reportDate').value;
+  const transcript = document.getElementById('transcriptText').value.trim() || transcriptContent;
+
+  if (!reporterName) { showError('名前を入力してください'); return; }
+  if (!reportDate) { showError('日付を入力してください'); return; }
+  if (!transcript) { showError('業務内容を入力してください'); return; }
+
+  // --- UI更新 ---
+  const btn = document.getElementById('generateBtn');
+  btn.disabled = true;
+  btn.textContent = '生成中...';
+  document.getElementById('progressArea').classList.add('active');
+  document.getElementById('resultArea').classList.remove('active');
+
+  try {
+    // ステップ1: Claude APIで構造化
+    setProgress(10, 'AIが業務内容を分析中...');
+    const structured = await callClaudeAPI(proxyUrl, accessToken, model, transcript, reporterName, reportDate);
+
+    // ステップ2: マインドマップSVG生成
+    setProgress(50, 'マインドマップを生成中...');
+    const mindmapPng = await generateMindmapPng(structured.keywords, reporterName + 'の業務日報', reportDate);
+
+    // ステップ3: docx生成
+    setProgress(70, 'Word文書を生成中...');
+    const dateObj = new Date(reportDate);
+    const dateStr = formatDateJa(dateObj);
+    const buffer = await generateDocx(structured, reporterName, dateStr, mindmapPng);
+
+    // ステップ4: ダウンロード
+    setProgress(95, 'ダウンロード準備中...');
+    const fileDate = reportDate.replace(/-/g, '');
+    generatedFileName = fileDate + '_' + reporterName + '_業務日報.docx';
+    generatedBuffer = buffer;
+
+    saveAs(buffer, generatedFileName);
+
+    setProgress(100, '完了！');
+    document.getElementById('resultArea').classList.add('active');
+
+  } catch (err) {
+    console.error(err);
+    showError('エラーが発生しました: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '日報を生成する';
+  }
+}
+
+// =============================================================================
+// Claude API呼び出し
+// =============================================================================
+async function callClaudeAPI(proxyUrl, accessToken, model, transcript, reporterName, reportDate) {
+  const endpoint = proxyUrl;
+
+  const systemPrompt = `あなたは業務日報作成の専門家です。業務内容のメモや文字起こしデータを受け取り、構造化された業務日報データをJSON形式で返してください。
+
+以下のJSON構造で返してください。JSON以外のテキスト（説明文やマークダウンのバッククォート）は一切含めないでください:
+
+{
+  "executive_summary": "本日の業務全体の要点を3〜5行で要約した文章",
+  "achievements": ["達成・完了したこと1", "達成・完了したこと2", ...],
+  "topics": [
+    {
+      "title": "業務テーマ名",
+      "sections": [
+        { "label": "実施内容", "points": ["ポイント1", "ポイント2"] },
+        { "label": "成果・気づき", "points": ["ポイント1", "ポイント2"] },
+        { "label": "課題・次のステップ", "points": ["ポイント1", "ポイント2"] }
+      ]
+    }
+  ],
+  "keywords": {
+    "カテゴリ名1": { "color": "DBEAFE", "keywords": ["キーワード1", "キーワード2"] },
+    "カテゴリ名2": { "color": "D1FAE5", "keywords": ["キーワード1", "キーワード2"] }
+  },
+  "action_items": [
+    { "task": "タスク内容", "assignee": "担当者", "deadline": "期限", "status": "ステータス" }
+  ],
+  "tomorrow_plan": {
+    "tasks": ["明日やること1", "明日やること2"],
+    "notes": "その他メモ"
+  }
+}
+
+キーワードのカテゴリは3〜5個作成し、各カテゴリに適切な背景色(HEX、明るい色)を設定してください。色の候補: DBEAFE(青), D1FAE5(緑), FEE2E2(赤), CFFAFE(水色), FEF3C7(黄), EDE9FE(紫), FDE68A(オレンジ), E0E7FF(インディゴ)
+
+topics（業務テーマ）はセクション分けを柔軟に行い、内容に応じて「実施内容」「成果・気づき」「課題・次のステップ」「振り返り」「学び」「改善点」など適切なラベルを使ってください。
+
+action_itemsのstatusは「着手予定」「未着手」「進行中」「継続」「完了」「保留」等から適切なものを選んでください。
+担当者名が不明な場合は入力された名前を使用してください。`;
+
+  const userPrompt = `以下は「${reporterName}」の${reportDate}の業務メモ・文字起こしデータです。この内容から構造化された業務日報JSONを生成してください。
+
+--- 業務内容データ ---
+${transcript}
+--- ここまで ---
+
+JSONのみを出力してください。`;
+
+  const body = {
+    model: model,
+    max_tokens: 4000,
+    messages: [
+      { role: 'user', content: userPrompt }
+    ],
+    system: systemPrompt
+  };
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'x-access-token': accessToken,
+    'anthropic-version': '2023-06-01'
+  };
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: headers,
+    body: JSON.stringify(body)
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`API Error (${res.status}): ${errText}`);
+  }
+
+  const data = await res.json();
+  const text = data.content
+    .filter(c => c.type === 'text')
+    .map(c => c.text)
+    .join('');
+
+  // JSONパース（バッククォート除去）
+  const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    console.error('JSON parse error. Raw text:', text);
+    throw new Error('AIの応答をJSONとして解析できませんでした。再試行してください。');
+  }
+}
+
+// =============================================================================
+// マインドマップ生成（SVG → PNG）
+// =============================================================================
+async function generateMindmapPng(keywords, meetingName, meetingDate) {
+  const categories = Object.entries(keywords);
+  const catCount = categories.length;
+
+  // カテゴリごとの色（ノード本体の色）
+  const branchColors = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EF4444', '#06B6D4', '#F97316', '#6366F1'];
+
+  const W = 1200, H = 820;
+  const cx = W / 2, cy = H / 2;
+
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`;
+  svg += `<defs><style>text { font-family: Arial, Helvetica, sans-serif; }</style></defs>`;
+  svg += `<rect width="${W}" height="${H}" fill="#FAFBFC" rx="8"/>`;
+
+  // カテゴリ配置計算（中央から放射状）
+  const positions = [];
+  for (let i = 0; i < catCount; i++) {
+    const angle = (2 * Math.PI * i / catCount) - Math.PI / 2;
+    const rx = 280, ry = 200;
+    const bx = cx + rx * Math.cos(angle);
+    const by = cy + ry * Math.sin(angle);
+    positions.push({ bx, by, angle });
+  }
+
+  // 接続線（中央→カテゴリ）
+  categories.forEach(([, ], i) => {
+    const { bx, by } = positions[i];
+    const color = branchColors[i % branchColors.length];
+    const mcx = (cx + bx) / 2;
+    const mcy = cy + (by - cy) * 0.3;
+    svg += `<path d="M ${cx},${cy} Q ${mcx},${mcy} ${bx},${by}" stroke="${color}" stroke-width="2.5" fill="none" opacity="0.45"/>`;
+  });
+
+  // カテゴリノード＋サブキーワード
+  categories.forEach(([catName, catData], i) => {
+    const { bx, by, angle } = positions[i];
+    const color = branchColors[i % branchColors.length];
+    const bgColor = '#' + (catData.color || 'E5E7EB');
+    const kws = catData.keywords || [];
+
+    // カテゴリノード
+    const labelW = Math.max(catName.length * 16, 120);
+    svg += `<rect x="${bx - labelW/2}" y="${by - 22}" width="${labelW}" height="44" rx="22" fill="${color}"/>`;
+    svg += `<text x="${bx}" y="${by + 5}" text-anchor="middle" fill="white" font-size="13" font-weight="bold">${escXml(catName)}</text>`;
+
+    // サブキーワード（カテゴリの外側に配置）
+    const kwCount = Math.min(kws.length, 5); // 最大5個表示
+    kws.slice(0, kwCount).forEach((kw, j) => {
+      const subAngle = angle + (j - (kwCount - 1) / 2) * 0.3;
+      const subR = 140 + (j % 2) * 20;
+      const sx = bx + subR * Math.cos(subAngle);
+      const sy = by + subR * Math.sin(subAngle);
+
+      // 接続線
+      svg += `<line x1="${bx}" y1="${by}" x2="${sx}" y2="${sy}" stroke="${color}" stroke-width="1.2" opacity="0.3"/>`;
+
+      // サブノード
+      const kwW = Math.max(kw.length * 13, 70);
+      svg += `<rect x="${sx - kwW/2}" y="${sy - 14}" width="${kwW}" height="28" rx="14" fill="${bgColor}" stroke="${color}" stroke-width="1"/>`;
+      svg += `<text x="${sx}" y="${sy + 4}" text-anchor="middle" fill="${color}" font-size="10">${escXml(kw)}</text>`;
+    });
+  });
+
+  // 中央ノード
+  svg += `<rect x="${cx - 90}" y="${cy - 32}" width="180" height="64" rx="32" fill="#2E4057"/>`;
+  svg += `<text x="${cx}" y="${cy - 4}" text-anchor="middle" fill="white" font-size="16" font-weight="bold">${escXml(meetingName.length > 12 ? meetingName.slice(0,12)+'...' : meetingName)}</text>`;
+
+  const dateLabel = meetingDate ? new Date(meetingDate).toLocaleDateString('ja-JP') : '';
+  if (dateLabel) {
+    svg += `<text x="${cx}" y="${cy + 16}" text-anchor="middle" fill="#CBD5E1" font-size="10">${escXml(dateLabel)}</text>`;
+  }
+
+  svg += `</svg>`;
+
+  // SVG → PNG（Canvas経由）
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+
+    img.onload = function() {
+      const canvas = document.createElement('canvas');
+      canvas.width = W * 2;  // 高解像度
+      canvas.height = H * 2;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(2, 2);
+      ctx.drawImage(img, 0, 0, W, H);
+      URL.revokeObjectURL(url);
+
+      canvas.toBlob(function(blob) {
+        const reader = new FileReader();
+        reader.onload = () => resolve(new Uint8Array(reader.result));
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(blob);
+      }, 'image/png');
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+function escXml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// =============================================================================
+// docx生成
+// =============================================================================
+async function generateDocx(data, reporterName, dateStr, mindmapPng) {
+  const {
+    Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, ImageRun,
+    AlignmentType, HeadingLevel, BorderStyle, WidthType, ShadingType,
+    LevelFormat, PageBreak
+  } = docx;
+
+  const border = { style: BorderStyle.SINGLE, size: 1, color: "999999" };
+  const borders = { top: border, bottom: border, left: border, right: border };
+  const cm = { top: 60, bottom: 60, left: 100, right: 100 }; // cell margins
+
+  // --- ヘルパー関数 ---
+  function hCell(text, w) {
+    return new TableCell({
+      borders, width: { size: w, type: WidthType.DXA },
+      shading: { fill: "2E4057", type: ShadingType.CLEAR }, margins: cm,
+      children: [new Paragraph({ children: [new TextRun({ text, font: "Arial", size: 20, bold: true, color: "FFFFFF" })] })]
+    });
+  }
+  function dCell(text, w, opts = {}) {
+    return new TableCell({
+      borders, width: { size: w, type: WidthType.DXA },
+      shading: opts.fill ? { fill: opts.fill, type: ShadingType.CLEAR } : undefined,
+      margins: cm,
+      children: [new Paragraph({ children: [new TextRun({ text, font: "Arial", size: 20, bold: !!opts.bold })] })]
+    });
+  }
+  function bullet(text) {
+    return new Paragraph({ numbering: { reference: "bullets", level: 0 }, children: [new TextRun(text)] });
+  }
+  function sectionLabel(text) {
+    return new Paragraph({ spacing: { before: 120, after: 60 }, children: [new TextRun({ text: '【' + text + '】', bold: true })] });
+  }
+
+  // --- children配列を組み立て ---
+  const children = [];
+
+  // タイトル
+  children.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 100 },
+    children: [new TextRun({ text: "業務日報", font: "Arial", size: 40, bold: true, color: "2E4057" })] }));
+  children.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 300 },
+    children: [new TextRun({ text: reporterName, font: "Arial", size: 28, color: "555555" })] }));
+
+  // 基本情報
+  children.push(new Table({
+    width: { size: 9506, type: WidthType.DXA }, columnWidths: [2400, 7106],
+    rows: [
+      new TableRow({ children: [dCell("日付", 2400, { fill: "E8EDF2", bold: true }), dCell(dateStr, 7106)] }),
+      new TableRow({ children: [dCell("記録者", 2400, { fill: "E8EDF2", bold: true }), dCell(reporterName, 7106)] }),
+      new TableRow({ children: [dCell("作成方法", 2400, { fill: "E8EDF2", bold: true }), dCell("AI自動生成", 7106)] }),
+    ]
+  }));
+  children.push(new Paragraph({ spacing: { before: 300 } }));
+
+  // サマリー
+  children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun("サマリー")] }));
+  children.push(new Paragraph({ spacing: { after: 80 }, children: [new TextRun(data.executive_summary || '')] }));
+
+  // キーワード一覧
+  children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun("キーワード一覧")] }));
+  const kwRows = [new TableRow({ children: [hCell("カテゴリ", 2200), hCell("キーワード", 7306)] })];
+  Object.entries(data.keywords || {}).forEach(([cat, catData]) => {
+    const kws = (catData.keywords || []).join(' ／ ');
+    kwRows.push(new TableRow({ children: [
+      dCell(cat, 2200, { fill: catData.color || "E5E7EB", bold: true }),
+      dCell(kws, 7306)
+    ]}));
+  });
+  children.push(new Table({ width: { size: 9506, type: WidthType.DXA }, columnWidths: [2200, 7306], rows: kwRows }));
+
+  // マインドマップ
+  children.push(new Paragraph({ children: [new PageBreak()] }));
+  children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun("キーワード マインドマップ")] }));
+  children.push(new Paragraph({ spacing: { after: 60 }, children: [
+    new TextRun({ text: "本日の業務に関する主要トピックとキーワードの関連を可視化。", font: "Arial", size: 20, color: "555555" })
+  ]}));
+  children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [
+    new ImageRun({ data: mindmapPng, transformation: { width: 700, height: 478 }, type: "png" })
+  ]}));
+  children.push(new Paragraph({ spacing: { before: 200 } }));
+
+  // 本日の成果
+  children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun("本日の成果")] }));
+  (data.achievements || []).forEach(d => children.push(bullet(d)));
+
+  // 業務詳細
+  children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun("業務詳細")] }));
+  (data.topics || []).forEach((topic, i) => {
+    children.push(new Paragraph({ heading: HeadingLevel.HEADING_2,
+      children: [new TextRun(`${i + 1}. ${topic.title}`)] }));
+    (topic.sections || []).forEach(sec => {
+      children.push(sectionLabel(sec.label));
+      (sec.points || []).forEach(p => children.push(bullet(p)));
+    });
+  });
+
+  // アクションアイテム
+  children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun("アクションアイテム")] }));
+  const aiRows = [new TableRow({ children: [
+    hCell("No", 600), hCell("タスク", 4400), hCell("担当", 1400), hCell("期限", 1200), hCell("ステータス", 1360)
+  ]})];
+  (data.action_items || []).forEach((item, i) => {
+    aiRows.push(new TableRow({ children: [
+      dCell(String(i + 1), 600), dCell(item.task, 4400), dCell(item.assignee, 1400),
+      dCell(item.deadline, 1200), dCell(item.status, 1360)
+    ]}));
+  });
+  children.push(new Table({ width: { size: 9506, type: WidthType.DXA }, columnWidths: [600, 4400, 1400, 1200, 1360], rows: aiRows }));
+  children.push(new Paragraph({ spacing: { before: 300 } }));
+
+  // 明日の予定
+  if (data.tomorrow_plan) {
+    children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun("明日の予定")] }));
+    if (data.tomorrow_plan.tasks) {
+      data.tomorrow_plan.tasks.forEach(t => children.push(bullet(t)));
+    }
+    if (data.tomorrow_plan.notes) {
+      children.push(new Paragraph({ spacing: { before: 80 }, children: [
+        new TextRun({ text: 'メモ: ' + data.tomorrow_plan.notes, color: "555555" })
+      ]}));
+    }
+  }
+
+  // 以上
+  children.push(new Paragraph({ spacing: { before: 400 } }));
+  children.push(new Paragraph({ alignment: AlignmentType.RIGHT,
+    children: [new TextRun({ text: "以上", font: "Arial", size: 22, color: "555555" })] }));
+
+  // --- Document生成 ---
+  const doc = new Document({
+    styles: {
+      default: { document: { run: { font: "Arial", size: 22 } } },
+      paragraphStyles: [
+        { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true,
+          run: { size: 32, bold: true, font: "Arial", color: "2E4057" },
+          paragraph: { spacing: { before: 360, after: 200 }, outlineLevel: 0 } },
+        { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true,
+          run: { size: 26, bold: true, font: "Arial", color: "2E4057" },
+          paragraph: { spacing: { before: 240, after: 120 }, outlineLevel: 1 } },
+      ]
+    },
+    numbering: {
+      config: [{
+        reference: "bullets",
+        levels: [{ level: 0, format: LevelFormat.BULLET, text: "\u2022", alignment: AlignmentType.LEFT,
+          style: { paragraph: { indent: { left: 720, hanging: 360 } } } }]
+      }]
+    },
+    sections: [{
+      properties: {
+        page: {
+          size: { width: 11906, height: 16838 },
+          margin: { top: 1200, right: 1200, bottom: 1200, left: 1200 }
+        }
+      },
+      children
+    }]
+  });
+
+  return await Packer.toBlob(doc);
+}
+
+// =============================================================================
+// ユーティリティ
+// =============================================================================
+function formatDateJa(d) {
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  const days = ['日', '月', '火', '水', '木', '金', '土'];
+  const dow = days[d.getDay()];
+  return `${y}年${m}月${day}日（${dow}）`;
+}
+
+// 初期化
+(function init() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  document.getElementById('reportDate').value = local.toISOString().slice(0, 10);
+})();
+</script>
+
+</body>
+</html>
